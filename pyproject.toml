@@ -1,0 +1,16 @@
+[project]
+name = "spotify-friends"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ipykernel>=7.1.0",
+    "ipysigma>=0.24.5",
+    "matplotlib>=3.10.7",
+    "networkx>=3.5",
+    "pyvis>=0.3.2",
+    "rustworkx>=0.17.1",
+    "scipy>=1.16.3",
+    "selenium>=4.38.0",
+]
