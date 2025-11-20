@@ -9,6 +9,7 @@ dependencies = [
     "ipysigma>=0.24.5",
     "matplotlib>=3.10.7",
     "networkx>=3.5",
+    "pydantic>=2.12.4",
     "pyvis>=0.3.2",
     "rustworkx>=0.17.1",
     "scipy>=1.16.3",
