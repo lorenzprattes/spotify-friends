@@ -10,44 +10,15 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from enum import Enum
 from datetime import datetime
+import time
 
 import threading
 import queue
 from pydantic import BaseModel, Field
 
-MAX_THREADS = 8
-TIMEOUT = 2
-QUEUE_TIMEOUT = 5
-MAX_FOLLOWERS = 100
-DEBUG = True
-
-user_id_pattern = re.compile(r'^(.*:)(.*?)-[^-]*$')
-user_id_string = '[id^="card-title-spotify:user:"]'
-user_name_class_string = '.__NC_butOiOksXo2E3M1'
-
-shutdown_event = threading.Event()
-visited_users = {}
-user_queue = queue.Queue()
-data_queue = queue.Queue()
-visited_users = set()
-visited_lock = threading.Lock()
-
-
-class ScrapingMessages(Enum):
-    SCRAPING_LIMIT_REACHED = "scraping_limit_reached"
-    TIMEOUT = "timeout"
-    USER_NOT_FOUND = "user_not_found"
-    USERNAME_NOT_FOUND = "username_not_found"
-    USER_DETAILS_NOT_FOUND = "user_details_not_found"
-    NO_FOLLOWERS_IN_DETAILS = "no_followers_in_details"
-    NO_FOLLOWERS_IN_FOLLOWER_PAGE = "no_followers_in_follower_page"
-    ERROR_DURING_FOLLOWER_SCRAPE = "error_during_follower_scrape"
-    TOO_MANY_FOLLOWERS = "too_many_followers"
-    NETWORK_ERROR = "network_error"
-
-
 class userData(BaseModel):
     id: str = ""
+    scraping_depth: int = 0
     name: str = "Unknown"
     playlists: int = 0
     followers: int = 0
@@ -55,19 +26,85 @@ class userData(BaseModel):
     follower_list: List[str] = Field(default_factory=list)
     error: str = ""
 
+class queueItem(BaseModel):
+    id: str
+    depth: int
+    retries: int = 0
+    error: str = ""
+
+MAX_THREADS = 4
+TIMEOUT = 15
+QUEUE_TIMEOUT = 5
+MAX_FOLLOWERS = 100
+DEBUG = True
+MAX_RETRIES = 2
+
+user_id_pattern = re.compile(r'^(.*:)(.*?)-[^-]*$')
+user_id_string = '[id^="card-title-spotify:user:"]'
+user_name_class_string = '.__NC_butOiOksXo2E3M1'
+user_details_class_string = '.JWDnag2Mepdf9QE0cNbg'
+
+
+visited_users = {}
+user_queue = queue.Queue()
+data_queue = queue.Queue()
+visited_users = set()
+visited_lock = threading.Lock()
+
+error_counter_lock = threading.Lock()
+error_counter = {}
+error_users_lock = threading.Lock()
+error_users: List[queueItem] = []
+
+class ScrapingMessages(Enum):
+    SCRAPING_LIMIT_REACHED = "scraping_limit_reached"
+    TIMEOUT = "timeout"
+    USER_NOT_FOUND = "user_not_found"
+    USERNAME_NOT_FOUND = "username_not_found"
+    USER_DETAILS_NOT_FOUND = "user_details_not_found"
+    NO_FOLLOWERS = "no_followers"
+    NO_FOLLOWERS_IN_FOLLOWER_PAGE = "no_followers_in_follower_page"
+    FOLLOWERS_NOT_MATCHING = "followers_not_matching"
+    ERROR_DURING_FOLLOWER_SCRAPE = "error_during_follower_scrape"
+    TOO_MANY_FOLLOWERS = "too_many_followers"
+    NETWORK_ERROR = "network_error"
+
+
+
 
 class UserNotFoundError(Exception):
-    pass
+    def __init__(self, message):
+        super().__init__(message)
+        if DEBUG:
+            with error_counter_lock:
+                if message in error_counter:
+                    error_counter[message] += 1
+                else:
+                    error_counter[message] = 1
+        
+        if DEBUG:
+            print(f"[ScrapingException] {message} (count: {error_counter[message]})")
 
 
 class ScrapingException(Exception):
-    pass
+    def __init__(self, message):
+        super().__init__(message)
+        if DEBUG:
+            with error_counter_lock:
+                if message in error_counter:
+                    error_counter[message] += 1
+                else:
+                    error_counter[message] = 1
+        
+        if DEBUG:
+            print(f"[ScrapingException] {message} (count: {error_counter[message]})")
 
 
 def get_chrome_options():
     options = Options()
     options.add_argument("--headless")
-    options.page_load_strategy = 'normal'
+    options.page_load_strategy = 'eager'
+    options.add_argument("--disable-dev-shm-usage")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument(
@@ -88,28 +125,24 @@ def get_user_details(user: userData, driver: webdriver.Chrome):
     try:
         WebDriverWait(driver, TIMEOUT).until(
             EC.presence_of_element_located(
-                (By.XPATH,
-                 "//*[contains(normalize-space(text()), 'Followers')]")
+                (By.XPATH, 
+                    f"//*[contains(normalize-space(text()), 'Follow') or contains(normalize-space(text()), 'Follower')]")
             )
         )
     except:
         raise ScrapingException(ScrapingMessages.USER_NOT_FOUND.value)
 
-    full_text = driver.page_source
-
-    user_name = ""
     try:
         user.name = driver.find_element(
             By.CSS_SELECTOR, user_name_class_string).text
     except:
         raise ScrapingException(ScrapingMessages.USERNAME_NOT_FOUND.value)
 
-    user_details = []
     try:
-        full_text = driver.find_element(By.TAG_NAME, "body").text
-        pl_match = re.search(r'(\d+(?:,\d+)*)\s+Public Playlist', full_text, re.IGNORECASE)
-        fo_match = re.search(r'(\d+(?:,\d+)*)\s+Follower', full_text, re.IGNORECASE)
-        fi_match = re.search(r'(\d+(?:,\d+)*)\s+Following', full_text, re.IGNORECASE)
+        selection =  driver.find_element(By.CSS_SELECTOR, user_details_class_string).text
+        pl_match = re.search(r'(\d+(?:,\d+)*)\s+Public Playlist', selection, re.IGNORECASE)
+        fo_match = re.search(r'(\d+(?:,\d+)*)\s+Follower', selection, re.IGNORECASE)
+        fi_match = re.search(r'(\d+(?:,\d+)*)\s+Following', selection, re.IGNORECASE)
 
         user.playlists = int(pl_match.group(1).replace(',', '')) if pl_match else 0
         user.followers = int(fo_match.group(1).replace(',', '')) if fo_match else 0
@@ -173,9 +206,17 @@ def worker(thread_id):
             if item is None:
                 user_queue.task_done()
                 break
-
-            id, depth = item
-            user = userData(id=id)
+            if item.retries > MAX_RETRIES:
+                if DEBUG:
+                    print(f"[Thread-{thread_id}] Max retries reached for user {item.id}, skipping.")
+                user_queue.task_done()
+                with error_users_lock:
+                    error_users.append(item)
+                with visited_lock:
+                    visited_users.add(item.id)
+                continue
+            
+            user = userData(id=item.id, depth=item.depth)
 
             with visited_lock:
                 if user.id in visited_users:
@@ -184,32 +225,40 @@ def worker(thread_id):
                 visited_users.add(user.id)
 
             try:
-                user_details = get_user_details(user, driver)
+                get_user_details(user, driver)
             except Exception as e:
                 user.error = str(e)
-                data_queue.put(user)
+                with visited_lock:
+                    visited_users.remove(item.id)
+                user_queue.put(queueItem(id=item.id, depth=item.depth, retries=item.retries + 1, error=user.error))  # requeue for retry
+
                 user_queue.task_done()
                 continue
 
-            if user.followers < 0 or user.followers > MAX_FOLLOWERS:
-                user.error = ScrapingMessages.NO_FOLLOWERS_IN_DETAILS.value if user.followers == 0 else ScrapingMessages.TOO_MANY_FOLLOWERS.value
+            if user.followers <= 0 or user.followers > MAX_FOLLOWERS:
+                user.error = ScrapingMessages.NO_FOLLOWERS.value if user.followers == 0 else ScrapingMessages.TOO_MANY_FOLLOWERS.value
                 data_queue.put(user)
                 user_queue.task_done()
                 continue
             try:
                 user.follower_list = find_users(user.id, driver)
+                if user.followers != len(user.follower_list):
+                    raise ScrapingException(ScrapingMessages.FOLLOWERS_NOT_MATCHING.value)
             except Exception as e:
                 user.error = str(e)
-                data_queue.put(user)
+                with visited_lock:
+                    visited_users.remove(item.id)
+                user_queue.put(queueItem(id=item.id, depth=item.depth, retries=item.retries + 1, error=user.error))  # requeue for retry
+
                 user_queue.task_done()
                 continue
 
             data_queue.put(user)
-            if depth > 0:
-                for user_id in user.follower_list:
-                    with visited_lock:
+            if item.depth > 0:
+                with visited_lock:
+                    for user_id in user.follower_list:
                         if user_id not in visited_users:
-                            user_queue.put((user_id, depth - 1))
+                            user_queue.put(queueItem(id=user_id, depth=item.depth - 1))
 
             if DEBUG:
                 print(f"[Thread-{thread_id}] Processed user {user.id} at depth {depth} with {len(user.follower_list)} followers scraped and {user.followers} followers found in details")
@@ -218,11 +267,43 @@ def worker(thread_id):
         driver.quit()
         print(f"[Thread-{thread_id}] Browser closed.")
 
+def write_metadata(starttime, output_filename: str):
+    endtime = time.perf_counter()
+    scrape_duration = endtime - starttime
+    metadata = {
+        "total_users_scraped": len(visited_users),
+        "total_errors": sum(error_counter.values()),
+        "errors_by_type": dict(error_counter),
+        "scrape_duration_seconds": round(scrape_duration, 3),
+        "time_per_scrape": round(scrape_duration / len(visited_users), 3) if len(visited_users) > 0 else 0,
+        "error_ratio": len(error_users) / len(visited_users) * 100 if len(visited_users) > 0 else 0,
+        "error_users": [user.id for user in error_users],
+    }
+    if DEBUG:
+        print(f"Scrape Duration: {scrape_duration:.2f} seconds")
+        print(f"Time per Scrape: {scrape_duration / len(visited_users):.4f} seconds")
+        print(f"Total Errors: {sum(error_counter.values())}")
+        with error_counter_lock:
+            for error_msg, count in error_counter.items():
+                print(f"  {error_msg}: {count}")
+
+        with error_users_lock:
+            print(f"Users with errors: {len(error_users)}")
+            print(f"Error Ratio: {len(error_users) / len(visited_users) * 100:.2f}%")
+            for user in error_users:
+                print(f"  {user.id}")
+
+    with open(output_filename, 'a', encoding='utf-8') as f:
+        json.dump(metadata, f, indent=4)
+    return metadata
+
+
 def start_scrape(startuser: str, depth: int, output_filename: str):
     if depth < 0:
         return
+    starttime= time.perf_counter()
     worker_thread_count = MAX_THREADS - 1 if MAX_THREADS > 1 else 1  # one thread is for data writer
-    user_queue.put((startuser, depth))
+    user_queue.put(queueItem(id=startuser, depth=depth))
 
     writer_t = threading.Thread(target=data_writer, args=(output_filename,),)
     writer_t.start()
@@ -257,10 +338,12 @@ def start_scrape(startuser: str, depth: int, output_filename: str):
     for t in worker_threads:
         t.join()
 
+    write_metadata(starttime, output_filename)
+
     data_queue.put(None)
     data_queue.join()
     writer_t.join()
-    print("Scraping complete, data saved")
+    print(f"Scraping completed for {len(visited_users)} users, data saved")
 
 
 if __name__ == "__main__":
