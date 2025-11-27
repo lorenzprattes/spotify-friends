@@ -3,6 +3,7 @@ import sys
 import re
 from typing import List
 
+import undetected_chromedriver as uc
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -32,12 +33,27 @@ class queueItem(BaseModel):
     retries: int = 0
     error: str = ""
 
-MAX_THREADS = 4
+MAX_THREADS = 10
 TIMEOUT = 15
 QUEUE_TIMEOUT = 5
 MAX_FOLLOWERS = 100
 DEBUG = True
 MAX_RETRIES = 2
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+]
 
 user_id_pattern = re.compile(r'^(.*:)(.*?)-[^-]*$')
 user_id_string = '[id^="card-title-spotify:user:"]'
@@ -50,6 +66,7 @@ user_queue = queue.Queue()
 data_queue = queue.Queue()
 visited_users = set()
 visited_lock = threading.Lock()
+driver_init_lock = threading.Lock()
 
 error_counter_lock = threading.Lock()
 error_counter = {}
@@ -100,23 +117,39 @@ class ScrapingException(Exception):
             print(f"[ScrapingException] {message} (count: {error_counter[message]})")
 
 
-def get_chrome_options():
-    options = Options()
-    options.add_argument("--headless")
-    options.page_load_strategy = 'eager'
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument(
-        "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/141.0.7390.65 Safari/537.36"
-    )
+def get_chrome_options(user_agent=None):
+    if False:
+        options = Options()
+        # options.add_argument("--headless") # Handled by uc.Chrome(headless=True)
+        options.page_load_strategy = 'normal'
+        options.add_argument("--disable-dev-shm-usage")
+        # options.add_experimental_option("excludeSwitches", ["enable-automation"]) # Handled by uc
+        # options.add_argument("--disable-blink-features=AutomationControlled") # Handled by uc
+    else:
+        options = Options()
+        options.add_argument("--headless")
+        options.page_load_strategy = 'eager'
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_argument("--disable-blink-features=AutomationControlled")
+
+    if user_agent:
+        options.add_argument(f"--user-agent={user_agent}")
+    else:
+        options.add_argument(
+            "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/141.0.7390.65 Safari/537.36"
+        )
     return options
 
 
-def start_webdriver():
-    options = get_chrome_options()
-    driver = webdriver.Chrome(options=options)
+def start_webdriver(user_agent=None):
+    options = get_chrome_options(user_agent)
+    if False:
+        with driver_init_lock:
+            driver = uc.Chrome(options=options, headless=True)
+    else:
+        driver = webdriver.Chrome(options=options)
     return driver
 
 
@@ -199,7 +232,8 @@ def data_writer(output_filename: str):
 def worker(thread_id):
     print(f"[Thread-{thread_id}] Starting browser...")
 
-    driver = start_webdriver()
+    user_agent = USER_AGENTS[thread_id % len(USER_AGENTS)]
+    driver = start_webdriver(user_agent)
     try:
         while True:
             item = user_queue.get()
