@@ -14,47 +14,12 @@ spec.loader.exec_module(spider_module)
 
 SpotifyGraphSpider = spider_module.SpotifyGraphSpider
 
-def run_scraper(start_user='jonas.f.rappold', depth=2, max_followers=100, output_file='output.jsonl'):
-    """Run the scraper with given parameters"""
-    
-    # Configure settings
-    settings = {
-        'DOWNLOAD_HANDLERS': {
-            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-        },
-        'TWISTED_REACTOR': 'twisted.internet.asyncioreactor.AsyncioSelectorReactor',
-        'PLAYWRIGHT_LAUNCH_OPTIONS': {
-            "headless": True,
-            "args": [
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-            ],
-        },
-        'CONCURRENT_REQUESTS': 16,
-        'CONCURRENT_REQUESTS_PER_DOMAIN': 8,
-        'DOWNLOAD_DELAY': 0.25,
-        'AUTOTHROTTLE_ENABLED': True,
-        'AUTOTHROTTLE_START_DELAY': 0.25,
-        'AUTOTHROTTLE_MAX_DELAY': 10.0,
-        'AUTOTHROTTLE_TARGET_CONCURRENCY': 4.0,
-        'AUTOTHROTTLE_DEBUG': False,
-        'RETRY_ENABLED': True,
-        'RETRY_TIMES': 3,
-        'RETRY_HTTP_CODES': [500, 502, 503, 504],
-        'LOG_LEVEL': 'INFO',
-        'FEEDS': {
-            output_file: {
-                'format': 'jsonlines',
-                'encoding': 'utf8',
-                'overwrite': True,
-            },
-        },
-    }
-    
-    process = CrawlerProcess(settings)
+def run_scraper(start_user, depth=2, max_followers=100, output_file='output.jsonl'):
+    # import debugpy
+    # debugpy.listen(("0.0.0.0", 5678)) 
+    # print("Waiting for debugger to attach...")
+    # debugpy.wait_for_client() 
+    process = CrawlerProcess()
     process.crawl(
         SpotifyGraphSpider,
         start_user=start_user,
