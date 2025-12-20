@@ -20,7 +20,7 @@ uv run python run_scraper.py <username> [depth] [max_followers] [output_file]
 
 Example:
 ```bash
-python run_scraper.py l0renzz 2 100 output.jsonl
+uv run python run_scraper.py l0renzz 2 100 output.jsonl
 ```
 
 Arguments:

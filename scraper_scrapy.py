@@ -56,7 +56,7 @@ class SpotifyGraphSpider(scrapy.Spider):
         "AUTOTHROTTLE_DEBUG": False,
         
         "RETRY_ENABLED": True, 
-        "RETRY_HTTP_CODES": [429, 500, 502, 503, 504], ## I removed 429 so i can retry manually
+        "RETRY_HTTP_CODES": [500, 502, 503, 504], ## I removed 429 so i can retry manually
         "RETRY_TIMES": 2,
         
         "TWISTED_REACTOR_CLOSE_TIMEOUT": 5,
@@ -263,7 +263,7 @@ class SpotifyGraphSpider(scrapy.Spider):
             meta={
                 "user_id": user_id,
                 "depth": depth,
-                "playwright": False,  # Direct HTTP request
+                "playwright": False, 
                 "handle_httpstatus_list": [401, 403, 429]
             },
             priority=(self.max_depth - depth) * 1000,  # Higher remaining depth = higher priority for BFS

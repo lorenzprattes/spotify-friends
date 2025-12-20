@@ -19,7 +19,14 @@ def run_scraper(start_user, depth=2, max_followers=100, output_file='output.json
     # debugpy.listen(("0.0.0.0", 5678)) 
     # print("Waiting for debugger to attach...")
     # debugpy.wait_for_client() 
-    process = CrawlerProcess()
+    process = CrawlerProcess(settings={
+        "FEEDS": {
+            output_file: {
+                "format": "jsonlines",
+                "overwrite": True,
+            }
+        }
+    })
     process.crawl(
         SpotifyGraphSpider,
         start_user=start_user,
