@@ -43,16 +43,16 @@ class SpotifyGraphSpider(scrapy.Spider):
             }
         },
         
-        "PLAYWRIGHT_MAX_CONTEXTS": 8,
+        "PLAYWRIGHT_MAX_CONTEXTS": 10,
         "PLAYWRIGHT_BROWSER_TYPE": "chromium",
         
-        "CONCURRENT_REQUESTS": 16,
-        "CONCURRENT_REQUESTS_PER_DOMAIN": 10, 
-        "DOWNLOAD_DELAY": 0.15,
+        "CONCURRENT_REQUESTS": 4,
+        "CONCURRENT_REQUESTS_PER_DOMAIN":1, 
+        "DOWNLOAD_DELAY": 0.4,
         "AUTOTHROTTLE_ENABLED": True,
         "AUTOTHROTTLE_START_DELAY": 2,
         "AUTOTHROTTLE_MAX_DELAY": 10.0,
-        "AUTOTHROTTLE_TARGET_CONCURRENCY": 7,
+        "AUTOTHROTTLE_TARGET_CONCURRENCY": 1,
         "AUTOTHROTTLE_DEBUG": False,
         
         "RETRY_ENABLED": True, 
