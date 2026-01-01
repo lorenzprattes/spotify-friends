@@ -264,7 +264,7 @@ class SpotifyGraphSpider(scrapy.Spider):
                 "user_id": user_id,
                 "depth": depth,
                 "playwright": False, 
-                "handle_httpstatus_list": [401, 403, 429]
+                "handle_httpstatus_list": [400, 401, 403, 404, 429, 500, 502, 503]
             },
             priority=(self.max_depth - depth) * 1000,  # Higher remaining depth = higher priority for BFS
             dont_filter=True
@@ -275,6 +275,7 @@ class SpotifyGraphSpider(scrapy.Spider):
             token = self.tokens[0]
             self.tokens.rotate(-1)  # Rotate for next request
             request.headers.update(token.to_headers())
+            request.meta['token_auth'] = token.authorization  # Track which token was used
             # Assign a download slot based on the token's hash to spread requests
             # This helps Scrapy manage concurrency per token more effectively.
             request.meta['download_slot'] = hash(token.authorization)
@@ -295,10 +296,13 @@ class SpotifyGraphSpider(scrapy.Spider):
         
         if response.status == 401:
             self.logger.warning(f"Token expired for {user_id} at depth {depth}, removing token")
-            # Remove the bad token (it's now at the end after rotation)
-            if self.tokens:
-                bad_token = self.tokens.pop()
-                bad_token.failed_count += 1
+            # Remove the specific token that was used for this request
+            token_auth = response.meta.get('token_auth')
+            if token_auth:
+                initial_len = len(self.tokens)
+                self.tokens = deque([t for t in self.tokens if t.authorization != token_auth])
+                if len(self.tokens) < initial_len:
+                    self.logger.info(f"Removed expired token. Pool size: {len(self.tokens)}")
             
             # Generate new token
             results.append(self.create_token_request())
@@ -401,7 +405,9 @@ class SpotifyGraphSpider(scrapy.Spider):
         user_id = request.meta.get("user_id")
         depth = request.meta.get("depth")
         
-        self.logger.error(f"Request failed for {user_id}: {failure}")
+        # Log more details to debug
+        self.logger.error(f"Request failed for {user_id} (depth={depth}): {failure.value}")
+        self.logger.debug(f"Failed request URL: {request.url}")
         
         yield {
             "id": user_id,
