@@ -234,13 +234,15 @@ class SpotifyGraphSpider(scrapy.Spider):
         if len(self.tokens) < self.min_tokens and self.tokens_being_generated == 0:
             yield self.create_token_request()
 
-    def create_follower_request(self, user_id: str, depth: int, is_retry: bool = False):
+    def create_follower_request(self, user_id: str, depth: int, is_retry: bool = False, known_name: str = None, known_followers_count: int = None):
         """Create an API request to fetch user followers
         
         Args:
             user_id: Spotify user ID
             depth: Current distance from start user (0 = start user)
             is_retry: Whether this is a retry of a failed request
+            known_name: Display name from parent's profile data
+            known_followers_count: Follower count from parent's profile data
         """
         if not is_retry and user_id in self.visited_users:
             return None
@@ -263,6 +265,8 @@ class SpotifyGraphSpider(scrapy.Spider):
             meta={
                 "user_id": user_id,
                 "depth": depth,
+                "known_name": known_name,
+                "known_followers_count": known_followers_count,
                 "playwright": False, 
                 "handle_httpstatus_list": [400, 401, 403, 404, 429, 500, 502, 503]
             },
@@ -292,6 +296,8 @@ class SpotifyGraphSpider(scrapy.Spider):
         """Parse the followers API response"""
         user_id = response.meta["user_id"]
         depth = response.meta["depth"]
+        known_name = response.meta.get("known_name")
+        known_followers_count = response.meta.get("known_followers_count")
         results = []
         
         if response.status == 401:
@@ -308,7 +314,7 @@ class SpotifyGraphSpider(scrapy.Spider):
             results.append(self.create_token_request())
             
             # Retry the request with same depth (mark as retry)
-            results.append(self.create_follower_request(user_id, depth, is_retry=True))
+            results.append(self.create_follower_request(user_id, depth, is_retry=True, known_name=known_name, known_followers_count=known_followers_count))
             return results
         
         if response.status == 403:
@@ -335,7 +341,7 @@ class SpotifyGraphSpider(scrapy.Spider):
                     results.append(self.create_token_request())
             
             # Retry the request
-            retry_req = self.create_follower_request(user_id, depth, is_retry=True)
+            retry_req = self.create_follower_request(user_id, depth, is_retry=True, known_name=known_name, known_followers_count=known_followers_count)
             if retry_req:
                 results.append(retry_req)
                 
@@ -351,13 +357,15 @@ class SpotifyGraphSpider(scrapy.Spider):
         
         profiles = data.get("profiles", [])
         
-        # Extract follower IDs
+        # Extract follower IDs and their profile data
         follower_ids = []
+        follower_profiles = []  # (id, name, followers_count) tuples
         for profile in profiles:
             uri = profile.get("uri", "")
             if uri.startswith("spotify:user:"):
                 fid = uri.split(":")[-1]
                 follower_ids.append(fid)
+                follower_profiles.append((fid, profile.get("name"), profile.get("followers_count")))
         
         follower_count = len(follower_ids)
         
@@ -367,10 +375,10 @@ class SpotifyGraphSpider(scrapy.Spider):
         
         results.append({
             "id": user_id,
+            "name": known_name,
             "depth": depth,
-            "followers_count": follower_count,
+            "followers_count": known_followers_count if known_followers_count is not None else follower_count,
             "follower_list": follower_ids,
-            "profiles": profiles
         })
         
         self.logger.info(
@@ -381,8 +389,8 @@ class SpotifyGraphSpider(scrapy.Spider):
         # Continue BFS if not at max depth and not too many followers
         if depth < self.max_depth and follower_count <= self.max_followers:
             self.logger.debug(f"Creating {follower_count} child requests at depth {depth + 1} for {user_id}")
-            for fid in follower_ids:
-                req = self.create_follower_request(fid, depth + 1)
+            for fid, name, fc in follower_profiles:
+                req = self.create_follower_request(fid, depth + 1, known_name=name, known_followers_count=fc)
                 if req:
                     results.append(req)
         else:
