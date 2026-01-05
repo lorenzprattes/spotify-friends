@@ -48,3 +48,31 @@ def load_graph(path: str) -> nx.DiGraph:
                 G.add_edge(follower_id, user_id)
     
     return G
+
+
+def load_graph_v2(path: str) -> nx.DiGraph:
+    G = nx.DiGraph()
+    error_count = 0
+    with open(path) as f:
+
+        for line in f:
+            record = json.loads(line)
+            
+            if "error" in record:
+                error_count =+ 1
+                continue
+            
+            user_id = record["id"]
+            name = record["name"]
+            follower_count = record["followers_count"]
+            followers = record["follower_list"]
+
+            G.add_node(user_id)
+            
+            for follower_id in followers:
+                G.add_node(
+                    follower_id
+                )
+                G.add_edge(follower_id, user_id)
+    
+    return G

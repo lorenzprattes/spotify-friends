@@ -1,9 +1,12 @@
 import scrapy
 import json
+import signal
+import os
 from collections import deque
 from scrapy.http import Request
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 import asyncio
+from scrapy import signals
 
 class SpotifyToken:
     """Container for Spotify authentication tokens and headers"""
@@ -64,11 +67,14 @@ class SpotifyGraphSpider(scrapy.Spider):
         "LOG_LEVEL": "INFO",
     }
 
-    def __init__(self, start_user, depth='2', max_followers='100', *args, **kwargs):
+    def __init__(self, start_user, depth='2', max_followers='100', checkpoint_file=None, resume_data=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.start_user = start_user
         self.max_depth = int(depth)
         self.max_followers = int(max_followers)
+        self.checkpoint_file = checkpoint_file or f'checkpoint_{start_user}.json'
+        self.should_save_checkpoint = False
+        self.resume_data = json.loads(resume_data) if resume_data else None
         
         # Token pool management
         self.tokens: deque[SpotifyToken] = deque()
@@ -102,6 +108,88 @@ class SpotifyGraphSpider(scrapy.Spider):
         self.rate_limited_count = 0
         self.consecutive_rate_limits = 0
         self.backoff_delay = 1.0  # Start with 1 second
+        
+        # Queue of users to scrape (for checkpoint/resume)
+        self.user_queue: deque = deque()  # (user_id, depth, known_name, known_followers_count)
+        
+        # Register signal handler
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        
+        # Restore from checkpoint if resume_data provided
+        if self.resume_data:
+            self.restore_from_checkpoint(self.resume_data)
+    
+    def _signal_handler(self, signum, frame):
+        """Handle interrupt signals (Ctrl+C)"""
+        self.logger.warning(f"Received signal {signum}, saving checkpoint before exit...")
+        self.should_save_checkpoint = True
+        self.save_checkpoint()
+        # Re-raise to let Scrapy handle the shutdown
+        raise KeyboardInterrupt()
+    
+    def save_checkpoint(self):
+        """Save current state to checkpoint file for later resumption"""
+        # Collect pending user requests from the queue
+        queue_items = list(self.user_queue)
+        
+        # Also extract user info from pending_requests
+        for req in self.pending_requests:
+            user_id = req.meta.get('user_id')
+            depth = req.meta.get('depth')
+            known_name = req.meta.get('known_name')
+            known_followers_count = req.meta.get('known_followers_count')
+            if user_id and depth is not None:
+                queue_items.append((user_id, depth, known_name, known_followers_count))
+        
+        checkpoint_data = {
+            'start_user': self.start_user,
+            'max_depth': self.max_depth,
+            'max_followers': self.max_followers,
+            'visited_users': list(self.visited_users),
+            'user_queue': queue_items,
+            'users_scraped': self.users_scraped,
+            'rate_limited_count': self.rate_limited_count,
+        }
+        
+        with open(self.checkpoint_file, 'w') as f:
+            json.dump(checkpoint_data, f, indent=2)
+        
+        self.logger.info(f"Checkpoint saved to {self.checkpoint_file}")
+        self.logger.info(f"  - Visited users: {len(self.visited_users)}")
+        self.logger.info(f"  - Queue size: {len(queue_items)}")
+        self.logger.info(f"  - Users scraped: {self.users_scraped}")
+    
+    @classmethod
+    def load_checkpoint(cls, checkpoint_file: str) -> Optional[dict]:
+        """Load checkpoint data from file"""
+        if not os.path.exists(checkpoint_file):
+            return None
+        with open(checkpoint_file, 'r') as f:
+            return json.load(f)
+    
+    def restore_from_checkpoint(self, checkpoint_data: dict):
+        """Restore spider state from checkpoint data"""
+        self.visited_users = set(checkpoint_data.get('visited_users', []))
+        self.users_scraped = checkpoint_data.get('users_scraped', 0)
+        self.rate_limited_count = checkpoint_data.get('rate_limited_count', 0)
+        
+        # Restore user queue
+        queue_items = checkpoint_data.get('user_queue', [])
+        for item in queue_items:
+            if len(item) >= 2:
+                user_id, depth = item[0], item[1]
+                known_name = item[2] if len(item) > 2 else None
+                known_followers_count = item[3] if len(item) > 3 else None
+                self.user_queue.append((user_id, depth, known_name, known_followers_count))
+                # Remove from visited_users so they can be re-requested
+                # (they were marked visited when request was created, but not yet processed)
+                self.visited_users.discard(user_id)
+        
+        self.logger.info(f"Restored from checkpoint:")
+        self.logger.info(f"  - Visited users: {len(self.visited_users)}")
+        self.logger.info(f"  - Queue size: {len(self.user_queue)}")
+        self.logger.info(f"  - Users scraped: {self.users_scraped}")
     
     def closed(self, reason):
         """Called when spider closes"""
@@ -110,6 +198,11 @@ class SpotifyGraphSpider(scrapy.Spider):
         self.logger.info(f"Total rate limits encountered: {self.rate_limited_count}")
         self.logger.info(f"Tokens in pool at close: {len(self.tokens)}")
         self.logger.info(f"Pending requests at close: {len(self.pending_requests)}")
+        self.logger.info(f"User queue at close: {len(self.user_queue)}")
+        
+        # Save checkpoint on any close if there's remaining work
+        if len(self.user_queue) > 0 or len(self.pending_requests) > 0:
+            self.save_checkpoint()
 
     def start_requests(self):
         """Entry point: start token generation and queue first user"""
@@ -119,8 +212,17 @@ class SpotifyGraphSpider(scrapy.Spider):
         for _ in range(self.min_tokens):
             yield self.create_token_request()
         
-        # initial user request with depth 0
-        yield self.create_follower_request(self.start_user, 0)
+        # If resuming from checkpoint, process the queue
+        if self.user_queue:
+            self.logger.info(f"Resuming from checkpoint with {len(self.user_queue)} users in queue")
+            for user_id, depth, known_name, known_followers_count in self.user_queue:
+                req = self.create_follower_request(user_id, depth, known_name=known_name, known_followers_count=known_followers_count)
+                if req:
+                    yield req
+            self.user_queue.clear()  # Clear after generating requests
+        else:
+            # Initial user request with depth 0
+            yield self.create_follower_request(self.start_user, 0)
 
     def create_token_request(self):
         self.tokens_being_generated += 1
@@ -367,9 +469,16 @@ class SpotifyGraphSpider(scrapy.Spider):
                 follower_ids.append(fid)
                 follower_profiles.append((fid, profile.get("name"), profile.get("followers_count")))
         
-        follower_count = len(follower_ids)
+        found_follower_count = len(follower_ids)
+        follower_count = known_followers_count if known_followers_count is not None else found_follower_count
         
         self.users_scraped += 1
+        
+        # Remove from user_queue now that we've successfully processed this user
+        try:
+            self.user_queue.remove((user_id, depth, known_name, known_followers_count))
+        except ValueError:
+            pass  # Not in queue (e.g., start user or retry)
         
         self.consecutive_rate_limits = 0
         
@@ -377,12 +486,12 @@ class SpotifyGraphSpider(scrapy.Spider):
             "id": user_id,
             "name": known_name,
             "depth": depth,
-            "followers_count": known_followers_count if known_followers_count is not None else follower_count,
-            "follower_list": follower_ids,
+            "followers_count": follower_count,
+            "follower_profiles": follower_profiles,
         })
         
         self.logger.info(
-            f"[{self.users_scraped}] Scraped {user_id} at depth {depth}: {follower_count} followers "
+            f"[{self.users_scraped}] Scraped {user_id} at depth {depth}: {follower_count} followers found, {known_followers_count} known. "
             f"(Rate limited: {self.rate_limited_count} times)"
         )
         
@@ -390,6 +499,9 @@ class SpotifyGraphSpider(scrapy.Spider):
         if depth < self.max_depth and follower_count <= self.max_followers:
             self.logger.debug(f"Creating {follower_count} child requests at depth {depth + 1} for {user_id}")
             for fid, name, fc in follower_profiles:
+                # Add to user_queue for checkpoint tracking
+                if fid not in self.visited_users:
+                    self.user_queue.append((fid, depth + 1, name, fc))
                 req = self.create_follower_request(fid, depth + 1, known_name=name, known_followers_count=fc)
                 if req:
                     results.append(req)
