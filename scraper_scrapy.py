@@ -231,6 +231,7 @@ class SpotifyGraphSpider(scrapy.Spider):
         context_name = f"token_context_{self.token_request_counter}"
         import random
         user_agent = random.choice(self.user_agents)
+        browser_type = random.choice(["chromium", "firefox", "webkit"])
         
         return Request(
             url="https://open.spotify.com/",
@@ -241,7 +242,9 @@ class SpotifyGraphSpider(scrapy.Spider):
                 "playwright_include_page": True,
                 "playwright_page_init_callback": self.init_token_capture,
                 "playwright_context": context_name,  # Unique context per request
+                "playwright_browser_type": browser_type,
                 "playwright_context_kwargs": {
+                    "storage_state": None,
                     "ignore_https_errors": True,
                     "user_agent": user_agent,
                 },
@@ -491,7 +494,7 @@ class SpotifyGraphSpider(scrapy.Spider):
         })
         
         self.logger.info(
-            f"[{self.users_scraped}] Scraped {user_id} at depth {depth}: {follower_count} followers found, {known_followers_count} known. "
+            f"[{self.users_scraped}] Scraped {user_id} at depth {depth}: {found_follower_count} followers found, {known_followers_count} known. "
             f"(Rate limited: {self.rate_limited_count} times)"
         )
         
