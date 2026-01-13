@@ -152,3 +152,93 @@ def load_graph_v3_rustworkx(path: str) -> tuple[rx.PyDiGraph, dict]:
                 G.add_edge(follower_idx, idx, None)
     
     return G, id_to_index
+
+
+import re
+
+def _sanitize_xml_string(s):
+    """Remove characters that are illegal in XML."""
+    if s is None:
+        return ""
+    if not isinstance(s, str):
+        return s
+    # Remove NULL and other illegal XML 1.0 characters
+    # XML 1.0 legal characters: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD]
+    result = ""
+    for char in s:
+        codepoint = ord(char)
+        if codepoint == 0x9 or codepoint == 0xA or codepoint == 0xD:
+            result += char
+        elif 0x20 <= codepoint <= 0xD7FF:
+            result += char
+        elif 0xE000 <= codepoint <= 0xFFFD:
+            result += char
+        # Skip everything else (including NULL, control chars, surrogates, etc.)
+    return result
+
+
+def export_to_gephi(input_path: str, output_path: str, graph_format: str = "gexf"):
+    """Export a JSONL graph file to a Gephi-compatible format.
+    
+    Args:
+        input_path: Path to the input JSONL file
+        output_path: Path for the output file (extension will be added if needed)
+        graph_format: Format to export ('gexf', 'graphml', 'gml'). Default: 'gexf'
+    
+    Supported formats:
+        - gexf: Graph Exchange XML Format (recommended for Gephi)
+        - graphml: GraphML format
+        - gml: Graph Modeling Language
+    """
+    # Load the graph
+    G = load_graph_v3(input_path)
+    
+    # Clean None values and illegal XML characters from node attributes
+    for node in G.nodes():
+        attrs = G.nodes[node]
+        for key, value in list(attrs.items()):
+            if value is None:
+                attrs[key] = ""  # Replace None with empty string
+            elif isinstance(value, str):
+                attrs[key] = _sanitize_xml_string(value)
+            elif isinstance(value, (int, float)) and value != value:  # Check for NaN
+                attrs[key] = 0
+    
+    # Create a new graph with sanitized node IDs
+    G_clean = nx.DiGraph()
+    node_mapping = {}
+    for node in G.nodes():
+        clean_node = _sanitize_xml_string(str(node)) if isinstance(node, str) else node
+        node_mapping[node] = clean_node
+        G_clean.add_node(clean_node, **G.nodes[node])
+    
+    for u, v in G.edges():
+        G_clean.add_edge(node_mapping[u], node_mapping[v])
+    
+    # Ensure output path has correct extension
+    if not output_path.endswith(f".{graph_format}"):
+        output_path = f"{output_path}.{graph_format}"
+    
+    # Export based on format
+    if graph_format == "gexf":
+        nx.write_gexf(G_clean, output_path)
+    elif graph_format == "graphml":
+        nx.write_graphml(G_clean, output_path)
+    elif graph_format == "gml":
+        nx.write_gml(G_clean, output_path)
+    else:
+        raise ValueError(f"Unsupported format: {graph_format}. Use 'gexf', 'graphml', or 'gml'")
+    
+    # Post-process: remove any remaining NULL characters from the file
+    with open(output_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # Remove NULL and other problematic characters
+    clean_content = content.replace('\x00', '')
+    
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(clean_content)
+    
+    print(f"Graph exported to {output_path}")
+    print(f"Nodes: {G_clean.number_of_nodes()}, Edges: {G_clean.number_of_edges()}")
+
