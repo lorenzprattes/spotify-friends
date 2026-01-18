@@ -10,6 +10,7 @@ dependencies = [
     "ipykernel>=7.1.0",
     "ipysigma>=0.24.5",
     "matplotlib>=3.10.7",
+    "networkit>=11.2.1",
     "networkx>=3.5",
     "nx-parallel>=0.4",
     "pandas>=2.3.3",
@@ -26,4 +27,9 @@ dependencies = [
     "selenium>=4.38.0",
     "setuptools>=80.9.0",
     "undetected-chromedriver>=3.5.5",
+]
+
+[tool.uv.workspace]
+members = [
+    "rustworkx",
 ]
