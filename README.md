@@ -3,8 +3,13 @@
 This project scrapes the spotify "/followers" endpoint to build a network of users.
 We generate the necessary tokens for interaction with the endpoint by using [scrapy-playwright](https://github.com/scrapy-plugins/scrapy-playwright) and scrape the endpoint with [scrapy](https://www.scrapy.org/).
 
+
 Disclaimer: This scraper is highly dependent on spotifys current rate limiting and bot detection practices. You will have to change the scrapy settings, especially the timing, and the scraper can run into dead ends. This can be caused by token starvation, or by simply getting blocked. In case of a scrape stopping, you have the option to resume, as lined out below.   
 __YMMV!__
+
+## Dataset
+A anonymized dataset can be found in 
+
 
 ## Installation
 
