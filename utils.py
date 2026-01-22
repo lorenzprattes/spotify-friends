@@ -1,7 +1,65 @@
-import json
 import networkx as nx
-import rustworkx as rx
+import random
+import numpy as np
+import networkit as nk
+import json
 
+
+def approx_average_shortest_path_length_nk(
+    graph: nk.Graph, 
+    num_samples: int = 100, 
+    seed: int | None = None
+):
+    """
+    Estimates average path length and standard deviation using NetworKit.
+
+    From https://i11www.iti.kit.edu/_media/projects/spp1126/files/sw-acct-05.pdf
+    
+    Args:
+        graph: A NetworKit graph
+        num_samples (int): Number of source nodes to sample.
+
+    Returns:
+        dict: {'mean': float, 'std_dev': float, 'sample_size': int}
+    """
+    if seed:
+        random.seed(seed)
+
+    shortest_paths_dijkstra = []
+    sample_nodes = random.sample(range(graph.numberOfNodes()), num_samples)
+
+    for node in sample_nodes:
+        bfs = nk.distance.BFS(graph, node).run()
+        dists = bfs.getDistances()
+        shortest_paths_dijkstra.extend(dists)
+    
+    avg_path_length = np.mean(shortest_paths_dijkstra)
+    std_dev = np.std(shortest_paths_dijkstra)
+    return {
+        'mean': avg_path_length,
+        'std_dev': std_dev,
+        'count': len(shortest_paths_dijkstra)
+    }
+
+def calculate_avg_clustering_coefficient_nk(
+    graph: nk.Graph
+):
+    """
+    Calculates the avg clustering coefficient, as builtin tools from NetworKit
+    dont include nodes with a degree lower then 2 in their calculation (i think they use triangles to calculate the values and 0 and 1 degree nodes cant form those)
+
+    Args:
+        graph: A NetworKit Graph
+
+    Returns:
+        float
+    """
+    local_clustering = nk.centrality.LocalClusteringCoefficient(graph, turbo=True)
+    local_clustering.run()
+    clustering_coeffs = local_clustering.scores()
+    avg_clustering_coeff = np.mean(clustering_coeffs)
+    return avg_clustering_coeff
+        
 def load_graph_v3(path: str) -> nx.DiGraph:
     G = nx.DiGraph()
     error_count = 0
