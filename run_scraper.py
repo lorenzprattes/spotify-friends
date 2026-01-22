@@ -7,8 +7,8 @@ import os
 from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
 import importlib.util
+import json
 
-# Load the spider module
 spec = importlib.util.spec_from_file_location("scraper_scrapy", "scraper_scrapy.py")
 spider_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(spider_module)
@@ -24,7 +24,7 @@ def run_scraper(start_user, depth=2, max_followers=100, output_file='output.json
     if checkpoint_file is None:
         checkpoint_file = f'checkpoint_{start_user}.json'
     
-    # Check if resuming from checkpoint
+    # are we resuming?
     checkpoint_data = None
     if resume:
         checkpoint_data = SpotifyGraphSpider.load_checkpoint(checkpoint_file)
@@ -41,7 +41,6 @@ def run_scraper(start_user, depth=2, max_followers=100, output_file='output.json
             print(f"Warning: No checkpoint file found at {checkpoint_file}, starting fresh")
             resume = False
     
-    # When resuming, append to output file instead of overwriting
     feed_settings = {
         output_file: {
             "format": "jsonlines",
@@ -53,8 +52,6 @@ def run_scraper(start_user, depth=2, max_followers=100, output_file='output.json
         "FEEDS": feed_settings
     })
     
-    # Pass checkpoint data as JSON string if resuming
-    import json
     resume_data = json.dumps(checkpoint_data) if (resume and checkpoint_data) else None
     
     process.crawl(
@@ -68,7 +65,6 @@ def run_scraper(start_user, depth=2, max_followers=100, output_file='output.json
     process.start()
 
 def resume_scraper(checkpoint_file, output_file=None):
-    """Resume a scrape from a checkpoint file"""
     checkpoint_data = SpotifyGraphSpider.load_checkpoint(checkpoint_file)
     if not checkpoint_data:
         print(f"Error: Checkpoint file not found: {checkpoint_file}")
@@ -94,7 +90,7 @@ def resume_scraper(checkpoint_file, output_file=None):
     run_scraper(start_user, depth, max_followers, output_file, checkpoint_file, resume=True)
 
 
-if __name__ == '__main__':
+def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Spotify Graph Scraper')
@@ -107,10 +103,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     if args.resume:
-        # Resume mode
         resume_scraper(args.resume, args.output_file or (args.start_user if args.start_user and args.start_user.endswith('.jsonl') else None))
     elif args.start_user:
-        # New scrape mode
         output_file = args.output_file or f'spotify_graph_{args.start_user}_{args.depth}.jsonl'
         
         print(f"Starting Spotify scraper...")
@@ -124,3 +118,7 @@ if __name__ == '__main__':
     else:
         parser.print_help()
         sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

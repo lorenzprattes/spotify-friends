@@ -28,8 +28,3 @@ dependencies = [
     "setuptools>=80.9.0",
     "undetected-chromedriver>=3.5.5",
 ]
-
-[tool.uv.workspace]
-members = [
-    "rustworkx",
-]
