@@ -17,7 +17,6 @@ class SpotifyToken:
         self.failed_count = 0
     
     def to_headers(self) -> Dict[str, str]:
-        # Return all captured headers
         return self.headers.copy()
 
 
@@ -39,7 +38,7 @@ class SpotifyGraphSpider(scrapy.Spider):
             ],
         },
         
-        # Force new context for each request to get different tokens
+        # force new context for each request to get different tokens
         "PLAYWRIGHT_CONTEXTS": {
             "default": {
                 "ignore_https_errors": True,
@@ -182,8 +181,6 @@ class SpotifyGraphSpider(scrapy.Spider):
                 known_name = item[2] if len(item) > 2 else None
                 known_followers_count = item[3] if len(item) > 3 else None
                 self.user_queue.append((user_id, depth, known_name, known_followers_count))
-                # Remove from visited_users so they can be re-requested
-                # (they were marked visited when request was created, but not yet processed)
                 self.visited_users.discard(user_id)
         
         self.logger.info(f"Restored from checkpoint:")
@@ -208,7 +205,7 @@ class SpotifyGraphSpider(scrapy.Spider):
         """Entry point: start token generation and queue first user"""
         self.logger.info(f"Starting scrape from {self.start_user} with max depth {self.max_depth}")
         
-        # Generate initial token pool
+        # Generate init token pool
         for _ in range(self.min_tokens):
             yield self.create_token_request()
         
@@ -221,7 +218,6 @@ class SpotifyGraphSpider(scrapy.Spider):
                     yield req
             self.user_queue.clear()  # Clear after generating requests
         else:
-            # Initial user request with depth 0
             yield self.create_follower_request(self.start_user, 0)
 
     def create_token_request(self):
@@ -384,9 +380,8 @@ class SpotifyGraphSpider(scrapy.Spider):
             token = self.tokens[0]
             self.tokens.rotate(-1)  # Rotate for next request
             request.headers.update(token.to_headers())
-            request.meta['token_auth'] = token.authorization  # Track which token was used
-            # Assign a download slot based on the token's hash to spread requests
-            # This helps Scrapy manage concurrency per token more effectively.
+            request.meta['token_auth'] = token.authorization
+            # hashed download slot for speed apparently
             request.meta['download_slot'] = hash(token.authorization)
             return request
         else:
@@ -407,7 +402,7 @@ class SpotifyGraphSpider(scrapy.Spider):
         
         if response.status == 401:
             self.logger.warning(f"Token expired for {user_id} at depth {depth}, removing token")
-            # Remove the specific token that was used for this request
+            # Remove the token that was used for this request
             token_auth = response.meta.get('token_auth')
             if token_auth:
                 initial_len = len(self.tokens)
@@ -415,10 +410,9 @@ class SpotifyGraphSpider(scrapy.Spider):
                 if len(self.tokens) < initial_len:
                     self.logger.info(f"Removed expired token. Pool size: {len(self.tokens)}")
             
-            # Generate new token
             results.append(self.create_token_request())
             
-            # Retry the request with same depth (mark as retry)
+            # Retry
             results.append(self.create_follower_request(user_id, depth, is_retry=True, known_name=known_name, known_followers_count=known_followers_count))
             return results
         
@@ -528,7 +522,6 @@ class SpotifyGraphSpider(scrapy.Spider):
         user_id = request.meta.get("user_id")
         depth = request.meta.get("depth")
         
-        # Log more details to debug
         self.logger.error(f"Request failed for {user_id} (depth={depth}): {failure.value}")
         self.logger.debug(f"Failed request URL: {request.url}")
         

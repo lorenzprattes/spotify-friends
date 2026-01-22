@@ -13,7 +13,7 @@ def analyze_path_lengths_rx(
     Estimates average path length and standard deviation using rustworkx.
 
     From https://i11www.iti.kit.edu/_media/projects/spp1126/files/sw-acct-05.pdf I think
-    
+    Uses Dijkstra as it defaults to BFS if unweighted
     Args:
         graph: A rustworkx PyGraph (undirected) or PyDiGraph (directed).
         num_samples (int): Number of source nodes to sample.
@@ -60,6 +60,21 @@ def approx_average_shortest_path_length_nk(
     num_samples: int = 100, 
     seed: int | None = None
 ):
+    """
+    Estimates average path length and standard deviation using NetworKit.
+
+    From https://i11www.iti.kit.edu/_media/projects/spp1126/files/sw-acct-05.pdf I think
+    
+    Args:
+        graph: A NetworKit graph
+        num_samples (int): Number of source nodes to sample.
+
+    Returns:
+        dict: {'mean': float, 'std_dev': float, 'sample_size': int}
+    """
+    if seed:
+        random.seed(seed)
+
     shortest_paths_dijkstra = []
     sample_nodes = random.sample(range(graph.numberOfNodes()), num_samples)
 
@@ -79,12 +94,19 @@ def approx_average_shortest_path_length_nk(
 def calculate_avg_clustering_coefficient_nk(
     graph: nk.Graph
 ):
+    """
+    Calculates the avg clustering coefficient, as builtin tools from NetworKit
+    dont include nodes with a degree lower then 2 in their calculation (i think they use triangles to calculate the values and 0 and 1 degree nodes cant form those)
+
+    Args:
+        graph: A NetworKit Graph
+
+    Returns:
+        float
+    """
     local_clustering = nk.centrality.LocalClusteringCoefficient(graph, turbo=True)
     local_clustering.run()
     clustering_coeffs = local_clustering.scores()
     avg_clustering_coeff = np.mean(clustering_coeffs)
-    return {
-        'mean': avg_clustering_coeff,
-        'std_dev': np.std(clustering_coeffs),
-        'count': len(clustering_coeffs)
-    }
+    return avg_clustering_coeff
+        
